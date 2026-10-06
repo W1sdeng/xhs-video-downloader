@@ -137,7 +137,7 @@
     <details class="cfg">
       <summary>⚙️ 设置：自建代理（推荐，稳定且不经过第三方）</summary>
       <div class="cfgrow">
-        <input id="workerUrl" placeholder="自己的 Cloudflare Worker 地址，如 https://xxx.workers.dev">
+        <input id="workerUrl" placeholder="自建代理地址，如 https://xxx.pages.dev/api 或 https://xxx.workers.dev">
         <button id="saveCfg">保存</button>
         <button id="clearCfg">清除</button>
       </div>
@@ -159,7 +159,7 @@
       <video id="player" controls preload="metadata"></video>
       <div class="vfail" id="vfail">页面内预览被 CDN 拦截了（正常现象）。点「打开/下载视频」用浏览器直接播放，播放器右下角就有下载按钮。</div>
       <div class="actions">
-        <a class="btn dl" id="dlBest" href="#" target="_blank" rel="noopener">打开/下载视频</a>
+        <a class="btn dl" id="dlBest" href="#" target="_blank" rel="noopener noreferrer">打开/下载视频</a>
         <button class="btn" id="copyBest">复制视频直链</button>
       </div>
       <div class="twrap">
@@ -213,7 +213,14 @@ function proxyChain(target) {
   const chain = [];
   const w = workerBase();
   if (w) chain.push({ name: "自建代理", url: w.replace(/\/+$/, "") + "/?url=" + encodeURIComponent(target) });
-  return chain.concat(PUBLIC_PROXIES.map(f => f(target)));
+  const pubs = PUBLIC_PROXIES.map(f => f(target));
+  const last = localStorage.getItem("xhsLastProxy");  // 上次成功的公共代理优先
+  if (last) {
+    const hit = pubs.find(p => p.name === last);
+    if (hit) chain.push(hit);
+  }
+  for (const p of pubs) if (!chain.includes(p)) chain.push(p);
+  return chain;
 }
 
 async function tryFetch(url, timeoutMs) {
@@ -234,14 +241,18 @@ async function fetchViaProxies(target) {
   const errors = [];
   for (const item of proxyChain(target)) {
     try {
-      const text = await tryFetch(item.url);
-      if (looksLikeNotePage(text)) return { text, via: item.name };
+      const text = await tryFetch(item.url, 20000);
+      if (looksLikeNotePage(text)) {
+        localStorage.setItem("xhsLastProxy", item.name);
+        return { text, via: item.name };
+      }
       errors.push(item.name + "：返回内容里没有笔记数据" + (isBlockedPage(text) ? "（触发风控/需登录）" : ""));
     } catch (e) {
       errors.push(item.name + "：" + (e.name === "AbortError" ? "超时" : e.message));
     }
   }
-  throw new Error("所有代理都失败了：\n" + errors.join("\n"));
+  throw new Error("所有代理都失败了：\n" + errors.join("\n") +
+                  "\n公共代理限流时通常几分钟后会恢复，可稍后再试；或在「⚙️ 设置」里配置自己的代理（免费，3 分钟，见仓库 worker.js）。");
 }
 
 /* ------------------------------------------------ 解析（与 Python 版同逻辑） */
@@ -351,6 +362,8 @@ async function extract() {
       if (note && note.type === "normal") throw new Error("这是图文笔记(无视频)，跳过：" + title.slice(0, 40));
       throw new Error("没找到视频流：链接可能失效，或该笔记需要登录/被风控（公共代理无法带登录态，请用完整版）");
     }
+    // https 页面里加载 http 资源会被浏览器当混合内容拦截，视频 CDN 支持 https，统一升级
+    streams.forEach(s => { s.url = s.url.replace(/^http:\/\//, "https://"); });
     DATA = { title, author, cover: findCover(note), streams,
              best: streams.reduce((a, b) => streamScore(b, "h264") > streamScore(a, "h264") ? b : a),
              via };
@@ -421,7 +434,7 @@ function render() {
       <td class="url" title="${esc(s.url)}">${esc(s.url)}</td>
       <td style="white-space:nowrap">
         <a class="btn dl" style="padding:5px 12px;font-size:13px" target="_blank"
-           rel="noopener" href="${esc(s.url)}">打开</a>
+           rel="noopener noreferrer" href="${esc(s.url)}">打开</a>
         <button class="small" data-url="${esc(s.url)}">复制</button>
       </td>
     </tr>`;
