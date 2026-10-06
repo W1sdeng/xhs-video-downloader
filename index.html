@@ -203,7 +203,7 @@ function fmtDur(ms) {
 // 部署自己的代理后，把地址填到这里（结尾不带斜杠），所有人打开页面即默认使用：
 //   Netlify:        https://你的站点.netlify.app/api
 //   Cloudflare:     https://你的站点.pages.dev/api   (仅老账号可用)
-const DEFAULT_PROXY = "";
+const DEFAULT_PROXY = "https://xhsdownload.netlify.app/api";
 
 function workerBase() { return (localStorage.getItem("xhsWorkerUrl") || "").trim() || DEFAULT_PROXY; }
 
