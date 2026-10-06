@@ -1,0 +1,18 @@
+# Netlify 配置：把 /api 重写到代理函数，页面里「⚙️ 设置」填
+#   https://你的站点.netlify.app/api
+# 即可与 Cloudflare Pages Functions 同样用法。
+
+[build]
+  publish = "."
+
+[[redirects]]
+  from = "/api"
+  to = "/.netlify/functions/proxy"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/"
+  to = "/.netlify/functions/proxy"
+  status = 200
+  force = true
