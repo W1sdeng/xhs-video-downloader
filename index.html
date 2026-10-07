@@ -339,7 +339,7 @@ async function extract() {
   $("#result").style.display = "none";
   try {
     const url = normalizeUrl(input);
-    if (!/(xiaohongshu\.com|xhslink\.com)/.test(url))
+    if (!/(xiaohongshu\.com|xhslink\.cn|xhslink\.com)/.test(url))
       throw new Error("这看起来不是小红书链接，请粘贴 App 里「复制链接」得到的内容");
     const { text, via } = await fetchViaProxies(url);
     const state = extractState(text);
