@@ -11,6 +11,7 @@ const UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
 function isAllowedHost(hostname) {
   const h = hostname.toLowerCase();
   return (h === "xiaohongshu.com" || h.endsWith(".xiaohongshu.com") ||
+          h === "xhslink.cn"     || h.endsWith(".xhslink.cn") ||
           h === "xhslink.com"    || h.endsWith(".xhslink.com") ||
           h === "xhscdn.com"     || h.endsWith(".xhscdn.com"));
 }
@@ -39,6 +40,21 @@ export async function onRequest(context) {
     });
   } catch (e) {
     return respond("上游请求失败: " + e.message, 502);
+  }
+
+  // xhslink.cn 等短链会 302 到登录页，真实笔记地址藏在 redirectPath 参数里
+  if ((upstream.url || "").includes("/login")) {
+    const real = new URL(upstream.url).searchParams.get("redirectPath");
+    let host2 = "";
+    try { host2 = new URL(real || "").hostname; } catch (e) {}
+    if (real && isAllowedHost(host2)) {
+      try {
+        upstream = await fetch(real, {
+          headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9" },
+          redirect: "follow",
+        });
+      } catch (e) {}
+    }
   }
 
   const headers = new Headers();
