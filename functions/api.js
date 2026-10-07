@@ -7,13 +7,19 @@
 
 const UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+const UA_MOBILE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
+                   "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1");
 
 function isAllowedHost(hostname) {
   const h = hostname.toLowerCase();
   return (h === "xiaohongshu.com" || h.endsWith(".xiaohongshu.com") ||
           h === "xhslink.cn"     || h.endsWith(".xhslink.cn") ||
           h === "xhslink.com"    || h.endsWith(".xhslink.com") ||
-          h === "xhscdn.com"     || h.endsWith(".xhscdn.com"));
+          h === "xhscdn.com"     || h.endsWith(".xhscdn.com") ||
+          h === "douyin.com"     || h.endsWith(".douyin.com") ||
+          h === "iesdouyin.com"  || h.endsWith(".iesdouyin.com") ||
+          h === "snssdk.com"     || h.endsWith(".snssdk.com") ||
+          h === "douyinpic.com"  || h.endsWith(".douyinpic.com"));
 }
 
 function respond(body, status, extraHeaders) {
@@ -30,7 +36,33 @@ export async function onRequest(context) {
   try { host = new URL(target).hostname; }
   catch (e) { return respond("缺少合法的 url 参数", 400); }
   if (!isAllowedHost(host))
-    return respond("仅支持小红书相关域名", 403);
+    return respond("仅支持小红书/抖音相关域名", 403);
+
+  // ---- 抖音分享页：手机UA + 两段式攒cookie + 重试，直到拿到 item_list ----
+  if (/douyin\.com|iesdouyin\.com|snssdk\.com/i.test(target)) {
+    let cookies = [];
+    let text = "";
+    for (let i = 0; i < 4; i++) {
+      const h = { "User-Agent": UA_MOBILE, "Accept-Language": "zh-CN,zh;q=0.9" };
+      if (cookies.length) h.Cookie = cookies.join("; ");
+      let resp;
+      try {
+        resp = await fetch(target, { headers: h, redirect: "follow" });
+      } catch (e) {
+        return respond("上游请求失败: " + e.message, 502);
+      }
+      const setc = resp.headers.getSetCookie ? resp.headers.getSetCookie() : [];
+      for (const c of setc) cookies.push(c.split(";")[0]);
+      text = await resp.text();
+      if (text.includes('"item_list":[{"')) break;
+    }
+    return new Response(text, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8",
+                 "Access-Control-Allow-Origin": "*",
+                 "Cache-Control": "no-store" },
+    });
+  }
 
   let upstream;
   try {
