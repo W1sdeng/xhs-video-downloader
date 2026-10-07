@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f1115">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="icon" href="data:,">
-<title>小红书视频下载器 · 纯网页版</title>
+<title>小红书·抖音视频下载器 · 纯网页版</title>
 <style>
   :root {
     --bg:#0f1115; --card:#171a21; --inner:#12141a; --line:#2a2f3a;
@@ -123,11 +123,11 @@
 <body>
 <div class="wrap">
   <header>
-    <h1><span class="logo-pill">RED</span>小红书视频下载器<span class="sub">纯网页版</span></h1>
+    <h1><span class="logo-pill">RED·DY</span>小红书 / 抖音 视频下载器<span class="sub">纯网页版</span></h1>
   </header>
 
   <div class="box">
-    <textarea id="link" placeholder="粘贴小红书分享链接（App 短链 / 完整链接 / 整段分享文案都行）"></textarea>
+    <textarea id="link" placeholder="粘贴小红书 / 抖音分享链接或整段分享文案（App 里复制什么就粘什么）"></textarea>
     <div class="row">
       <button class="primary" id="go">提取视频</button>
       <span class="hint">链接里的 xsec_token 参数别删</span>
@@ -260,7 +260,7 @@ async function fetchViaProxies(target) {
                   "\n公共代理限流时通常几分钟后会恢复，可稍后再试；或在「⚙️ 设置」里配置自己的代理（免费，3 分钟，见仓库 worker.js）。");
 }
 
-/* ------------------------------------------------ 解析（与 Python 版同逻辑） */
+/* ------------------------------------------------ 解析（小红书） */
 function normalizeUrl(raw) {
   raw = raw.trim().replace(/^["'<>，。\s]+|["'>，。\s]+$/g, "");
   const m = raw.match(/https?:\/\/[^\s"'<>#]+/);
@@ -268,6 +268,7 @@ function normalizeUrl(raw) {
   if (!/^https?:\/\//.test(url)) url = "https://" + url;
   return url.split("#")[0];
 }
+
 function extractNoteId(url) {
   let m = url.match(/\/(?:explore|discovery\/item)\/([0-9a-fA-F]{24})/);
   if (m) return m[1];
@@ -275,8 +276,9 @@ function extractNoteId(url) {
     if (/^[0-9a-fA-F]{24}$/.test(part)) return part;
   return null;
 }
-function extractState(html) {
-  const i = html.indexOf("window.__INITIAL_STATE__");
+
+function braceJson(html, marker, fixUndef) {
+  const i = html.indexOf(marker);
   if (i < 0) return null;
   const start = html.indexOf("{", i);
   if (start < 0) return null;
@@ -294,12 +296,17 @@ function extractState(html) {
     else if (c === "}") {
       depth--;
       if (depth === 0) {
-        const raw = html.slice(start, j + 1).replace(/([:,\[])\s*(undefined|NaN)/g, "$1null");
+        let raw = html.slice(start, j + 1);
+        if (fixUndef) raw = raw.replace(/([:,\[])\s*(undefined|NaN)/g, "$1null");
         try { return JSON.parse(raw); } catch (e) { return null; }
       }
     }
   }
   return null;
+}
+
+function extractState(html) {
+  return braceJson(html, "window.__INITIAL_STATE__", true);
 }
 function findNote(state, nid) {
   const dm = (state && state.note && state.note.noteDetailMap) || {};
@@ -339,39 +346,14 @@ async function extract() {
   $("#result").style.display = "none";
   try {
     const url = normalizeUrl(input);
-    if (!/(xiaohongshu\.com|xhslink\.cn|xhslink\.com)/.test(url))
-      throw new Error("这看起来不是小红书链接，请粘贴 App 里「复制链接」得到的内容");
-    const { text, via } = await fetchViaProxies(url);
-    const state = extractState(text);
-    const note = state ? findNote(state, extractNoteId(url)) : null;
-    let streams = [], title = "", author = "";
-    if (note) {
-      collectStreams(note, streams);
-      const uniq = {}; streams.forEach(s => uniq[s.url] = s);
-      streams = Object.values(uniq);
-      title = (note.title || note.desc || "").trim();
-      author = (note.user && note.user.nickname) || "";
-    } else {
-      const re = /"masterUrl"\s*:\s*"([^"]+)"/g;
-      let m;
-      while ((m = re.exec(text))) {
-        try {
-          streams.push({ codec: "h264", url: JSON.parse('"' + m[1] + '"'),
-                         bitrate: 0, width: 0, height: 0, duration: 0, size: 0 });
-        } catch (e) {}
-      }
-      const mt = text.match(/<title>([^<]*)<\/title>/);
-      if (mt) title = mt[1];
-    }
-    if (!streams.length) {
-      if (note && note.type === "normal") throw new Error("这是图文笔记(无视频)，跳过：" + title.slice(0, 40));
-      throw new Error("没找到视频流：链接可能失效，或该笔记需要登录/被风控（公共代理无法带登录态，请用完整版）");
-    }
-    // https 页面里加载 http 资源会被浏览器当混合内容拦截，视频 CDN 支持 https，统一升级
-    streams.forEach(s => { s.url = s.url.replace(/^http:\/\//, "https://"); });
-    DATA = { title, author, cover: findCover(note), streams,
-             best: streams.reduce((a, b) => streamScore(b, "h264") > streamScore(a, "h264") ? b : a),
-             via };
+    const isDy = /(douyin\.com|iesdouyin\.com|snssdk\.com)/i.test(url);
+    if (!isDy && !/(xiaohongshu\.com|xhslink\.cn|xhslink\.com)/.test(url))
+      throw new Error("这看起来不是小红书/抖音链接，请粘贴分享文案或链接");
+    const d = isDy ? await extractDouyin(url) : await extractXhs(url);
+    // https 页面里加载 http 资源会被浏览器当混合内容拦截，CDN 都支持 https，统一升级
+    d.streams.forEach(s => { s.url = s.url.replace(/^http:\/\//, "https://"); });
+    d.best = d.best.replace(/^http:\/\//, "https://");
+    DATA = d;
     render();
   } catch (e) {
     $("#err").textContent = "✗ " + e.message;
@@ -380,6 +362,75 @@ async function extract() {
     $("#spin").style.display = "none";
     $("#go").disabled = false;
   }
+}
+
+async function extractXhs(url) {
+  const { text, via } = await fetchViaProxies(url);
+  const state = extractState(text);
+  const note = state ? findNote(state, extractNoteId(url)) : null;
+  let streams = [], title = "", author = "";
+  if (note) {
+    collectStreams(note, streams);
+    const uniq = {}; streams.forEach(s => uniq[s.url] = s);
+    streams = Object.values(uniq);
+    title = (note.title || note.desc || "").trim();
+    author = (note.user && note.user.nickname) || "";
+  } else {
+    const re = /"masterUrl"\s*:\s*"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(text))) {
+      try {
+        streams.push({ codec: "h264", url: JSON.parse('"' + m[1] + '"'),
+                       bitrate: 0, width: 0, height: 0, duration: 0, size: 0 });
+      } catch (e) {}
+    }
+    const mt = text.match(/<title>([^<]*)<\/title>/);
+    if (mt) title = mt[1];
+  }
+  if (!streams.length) {
+    if (note && note.type === "normal")
+      throw new Error("这是图文笔记(无视频)，跳过：" + title.slice(0, 40));
+    throw new Error("没找到视频流：链接可能失效，或该笔记需要登录/被风控（公共代理无法带登录态，请用完整版）");
+  }
+  return { title, author, cover: findCover(note), platform: "xhs", via,
+           streams,
+           best: streams.reduce((a, b) => streamScore(b, "h264") > streamScore(a, "h264") ? b : a) };
+}
+
+/* ------------------------------------------------ 解析（抖音） */
+function findVideoPage(html) {
+  const d = braceJson(html, "_ROUTER_DATA", false);
+  const loader = (d && d.loaderData) || {};
+  const key = Object.keys(loader).find(k =>
+    k.startsWith("video_") && loader[k] && typeof loader[k] === "object");
+  return key ? loader[key] : null;
+}
+
+async function extractDouyin(url) {
+  let lastErr = "";
+  for (let t = 0; t < 3; t++) {  // 抖音风控有波动，多试几次
+    try {
+      const { text, via } = await fetchViaProxies(url);
+      const page = findVideoPage(text);
+      const items = (((page || {}).videoInfoRes) || {}).item_list || [];
+      if (!items.length) { lastErr = "抖音风控未放行(拿到空数据)"; continue; }
+      const it = items[0];
+      const video = it.video || {};
+      const vurl = ((video.play_addr || {}).url_list || [])[0] || "";
+      if (!vurl) { lastErr = "数据里没有播放地址"; continue; }
+      return {
+        title: (it.desc || "").trim(),
+        author: (it.author || {}).nickname || "",
+        cover: ((video.cover || {}).url_list || [])[0] || "",
+        platform: "douyin", via,
+        streams: [{ codec: "mp4", url: vurl, backup: [],
+                    bitrate: 0, width: video.width || 0, height: video.height || 0,
+                    duration: video.duration || 0, size: 0 }],
+        best: vurl,
+      };
+    } catch (e) { lastErr = e.message; }
+  }
+  throw new Error(lastErr + "（抖音风控有波动，可稍后再试一次）");
 }
 
 function findCover(note) {
@@ -401,6 +452,7 @@ function render() {
   $("#author").textContent = d.author ? "作者：" + d.author : "";
   $("#via").textContent = "解析通道：" + d.via;
   $("#badges").innerHTML =
+    `<span class="badge">${d.platform === "douyin" ? "抖音" : "小红书"}</span>` +
     `<span class="badge">${esc(best.codec)}</span>` +
     (best.width ? `<span class="badge">${best.width}×${best.height}</span>` : "");
 
